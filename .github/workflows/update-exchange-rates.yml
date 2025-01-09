@@ -1,0 +1,122 @@
+name: Update Exchange Rates
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  update-rates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Fetch and Update Rates
+        run: |
+          TODAY=$(TZ='Asia/Seoul' date +%Y%m%d)
+
+          response=$(curl -s "https://ecos.bok.or.kr/api/StatisticSearch/${{ secrets.BOK_API_KEY }}/json/kr/1/100/731Y001/D/${TODAY}/${TODAY}")
+
+          echo "API Response: $response"
+
+          if echo "$response" | grep -q "해당하는 데이터가 없습니다"; then
+            echo "No data available for today (INFO-200)"
+            exit 0
+          fi
+
+          if [ -z "$response" ] || [ "$response" = "null" ]; then
+            echo "No data available for today"
+            exit 0
+          fi
+
+          # 통화 코드 매핑 정의
+          declare -A currency_codes=(
+            ["원/미국달러(매매기준율)"]="USD"
+            ["원/일본엔(100엔)"]="JPY"
+            ["원/유로"]="EUR"
+            ["원/영국파운드"]="GBP"
+            ["원/캐나다달러"]="CAD"
+            ["원/스위스프랑"]="CHF"
+            ["원/홍콩달러"]="HKD"
+            ["원/스웨덴크로나"]="SEK"
+            ["원/호주달러"]="AUD"
+            ["원/덴마크크로나"]="DKK"
+            ["원/노르웨이크로나"]="NOK"
+            ["원/사우디아라비아리얄"]="SAR"
+            ["원/쿠웨이트디나르"]="KWD"
+            ["원/바레인디나르"]="BHD"
+            ["원/아랍에미리트디르함"]="AED"
+            ["원/싱가포르달러"]="SGD"
+            ["원/말레이지아링깃"]="MYR"
+            ["원/뉴질랜드달러"]="NZD"
+            ["원/태국바트"]="THB"
+            ["원/인도네시아루피아(100루피아)"]="IDR"
+            ["원/대만달러"]="TWD"
+            ["원/몽골투그릭"]="MNT"
+            ["원/카자흐스탄텡게"]="KZT"
+            ["원/필리핀페소"]="PHP"
+            ["원/베트남동(100동)"]="VND"
+            ["원/브루나이달러"]="BND"
+            ["원/인도루피"]="INR"
+            ["원/파키스탄루피"]="PKR"
+            ["원/방글라데시타카"]="BDT"
+            ["원/멕시코 페소"]="MXN"
+            ["원/브라질 헤알"]="BRL"
+            ["원/아르헨티나페소"]="ARS"
+            ["원/러시아루블"]="RUB"
+            ["원/헝가리포린트"]="HUF"
+            ["원/폴란트즈워티"]="PLN"
+            ["원/체코코루나"]="CZK"
+            ["원/카타르리얄"]="QAR"
+            ["원/이스라엘셰켈"]="ILS"
+            ["원/요르단디나르"]="JOD"
+            ["원/튀르키예리라"]="TRY"
+            ["원/남아프리카공화국랜드"]="ZAR"
+            ["원/이집트파운드"]="EGP"
+            ["원/위안(매매기준율)"]="CNY"
+          )
+
+          # 각 통화별로 처리
+          for currency_name in "${!currency_codes[@]}"; do
+            currency_code=${currency_codes[$currency_name]}
+            
+            rate=$(echo $response | jq -r ".StatisticSearch.row[] | select(.ITEM_NAME1==\"$currency_name\") | .DATA_VALUE")
+            
+            if [ ! -z "$rate" ] && [ "$rate" != "null" ]; then
+              # 100단위로 제공되는 통화들 처리
+              if [[ "$currency_code" == "VND" || "$currency_code" == "JPY" || "$currency_code" == "IDR" ]]; then
+                rate=$(echo "scale=6; 100/$rate" | bc)
+              else
+                rate=$(echo "scale=6; 1/$rate" | bc)
+              fi
+              
+              echo "Processing $currency_code: $rate"
+              
+              curl -X PATCH \
+                "https://firestore.googleapis.com/v1/projects/${{ secrets.FIREBASE_PROJECT_ID }}/databases/(default)/documents/exchange_rates/krw_${currency_code,,}" \
+                -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "fields": {
+                    "rate": {"doubleValue": '$rate'},
+                    "timestamp": {"timestampValue": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"},
+                    "source": {"stringValue": "BOK"},
+                    "currency": {"stringValue": "'${currency_code}'"},
+                    "success": {"booleanValue": true}
+                  }
+                }'
+              
+              echo "$currency_code rate updated successfully"
+            else
+              echo "No valid rate found for $currency_code"
+            fi
+          done
+
+env:
+  TZ: 'Asia/Seoul'

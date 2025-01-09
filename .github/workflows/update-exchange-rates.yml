@@ -91,26 +91,32 @@ jobs:
             if [ ! -z "$rate" ] && [ "$rate" != "null" ]; then
               # 100단위로 제공되는 통화들 처리
               if [[ "$currency_code" == "VND" || "$currency_code" == "JPY" || "$currency_code" == "IDR" ]]; then
-                rate=$(echo "scale=6; 100/$rate" | bc)
+                rate=$(echo "scale=6; 100/$rate" | bc | awk '{printf "%.6f", $0}')
               else
-                rate=$(echo "scale=6; 1/$rate" | bc)
+                rate=$(echo "scale=6; 1/$rate" | bc | awk '{printf "%.6f", $0}')
               fi
               
               echo "Processing $currency_code: $rate"
+              
+              # JSON 문자열 생성
+              json_data=$(cat <<EOF
+{
+  "fields": {
+    "rate": {"doubleValue": $rate},
+    "timestamp": {"timestampValue": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"},
+    "source": {"stringValue": "BOK"},
+    "currency": {"stringValue": "${currency_code}"},
+    "success": {"booleanValue": true}
+  }
+}
+EOF
+)
               
               curl -X PATCH \
                 "https://firestore.googleapis.com/v1/projects/${{ secrets.FIREBASE_PROJECT_ID }}/databases/(default)/documents/exchange_rates/krw_${currency_code,,}" \
                 -H "Authorization: Bearer $(gcloud auth print-access-token)" \
                 -H "Content-Type: application/json" \
-                -d '{
-                  "fields": {
-                    "rate": {"doubleValue": '$rate'},
-                    "timestamp": {"timestampValue": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"},
-                    "source": {"stringValue": "BOK"},
-                    "currency": {"stringValue": "'${currency_code}'"},
-                    "success": {"booleanValue": true}
-                  }
-                }'
+                -d "$json_data"
               
               echo "$currency_code rate updated successfully"
             else

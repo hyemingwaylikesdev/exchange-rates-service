@@ -87,7 +87,7 @@ jobs:
           rates_json+="\"timestamp\":{\"timestampValue\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"},"
           rates_json+="\"source\":{\"stringValue\":\"BOK\"},"
           rates_json+="\"success\":{\"booleanValue\":true},"
-          rates_json+="\"rates\":{"
+          rates_json+="\"rates\":{\"mapValue\":{\"fields\":{"
 
           # 각 통화별로 처리
           first=true
@@ -119,7 +119,7 @@ jobs:
           done
 
           # JSON 완성
-          rates_json+="}}"
+          rates_json+="}}}}"
 
           # Firestore에 저장
           curl -X PATCH \

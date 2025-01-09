@@ -82,7 +82,15 @@ jobs:
             ["원/위안(매매기준율)"]="CNY"
           )
 
+          # 모든 환율을 저장할 JSON 객체 초기화
+          rates_json="{"
+          rates_json+="\"timestamp\":{\"timestampValue\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"},"
+          rates_json+="\"source\":{\"stringValue\":\"BOK\"},"
+          rates_json+="\"success\":{\"booleanValue\":true},"
+          rates_json+="\"rates\":{"
+
           # 각 통화별로 처리
+          first=true
           for currency_name in "${!currency_codes[@]}"; do
             currency_code=${currency_codes[$currency_name]}
             
@@ -98,20 +106,29 @@ jobs:
               
               echo "Processing $currency_code: $rate"
               
-              # JSON 문자열 생성
-              json_data="{\"fields\":{\"rate\":{\"doubleValue\":$rate},\"timestamp\":{\"timestampValue\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"},\"source\":{\"stringValue\":\"BOK\"},\"currency\":{\"stringValue\":\"${currency_code}\"},\"success\":{\"booleanValue\":true}}}"
-              
-              curl -X PATCH \
-                "https://firestore.googleapis.com/v1/projects/${{ secrets.FIREBASE_PROJECT_ID }}/databases/(default)/documents/exchange_rates/krw_${currency_code,,}" \
-                -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-                -H "Content-Type: application/json" \
-                -d "$json_data"
-              
-              echo "$currency_code rate updated successfully"
+              # JSON에 환율 추가
+              if [ "$first" = true ]; then
+                first=false
+              else
+                rates_json+=","
+              fi
+              rates_json+="\"${currency_code}\":{\"doubleValue\":$rate}"
             else
               echo "No valid rate found for $currency_code"
             fi
           done
+
+          # JSON 완성
+          rates_json+="}}"
+
+          # Firestore에 저장
+          curl -X PATCH \
+            "https://firestore.googleapis.com/v1/projects/${{ secrets.FIREBASE_PROJECT_ID }}/databases/(default)/documents/exchange_rates/latest" \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Content-Type: application/json" \
+            -d "{\"fields\":$rates_json}"
+
+          echo "All rates updated successfully"
 
 env:
   TZ: 'Asia/Seoul'
